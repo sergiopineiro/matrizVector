@@ -100,9 +100,9 @@ int main( int argc, char *argv[] ) {
     for(i=0; i<mpad; i++){
         arrRegRes[i] = _mm_load_ps(arrIni);
     }
-    __m128 reg_A, reg_Alfa, reg_x, reg_y;
+    __m128 reg_A, reg_Alfa, reg_x, reg_y, reg_n1, reg_n2, reg_n3, reg_n4, res;
+    
     float arrAlfa[4] __attribute__((aligned(16))) = {alfa, alfa, alfa, alfa};
-
     reg_Alfa = _mm_load_ps(arrAlfa);
 
     // Parte fundamental del programa
@@ -120,20 +120,29 @@ int main( int argc, char *argv[] ) {
                 else {
                     arrRegRes[i+z] = reg_A;
                 }
-
             } 
         }
-    }
-
-    for(i=0; i<mpad; i+=4){
-        __m128 res1;
-        __m128 res2;
-        res1 = _mm_hadd_ps(arrRegRes[i], arrRegRes[i+1]);
-        res2 = _mm_hadd_ps(arrRegRes[i+2], arrRegRes[i+3]);
-        res1 = _mm_hadd_ps(res1, res1);
-        res2 = _mm_hadd_ps(res2, res2);
-        res1 = _mm_shuffle_ps(res1, res2, _MM_SHUFFLE(1,0,1,0));
-        _mm_store_ps(&ypad[i], res1);
+        for(z=0; z<2; z++){ //Traspone los cuatro registros y los suma
+            if(!z){
+                reg_n1 = _mm_unpacklo_ps(arrRegRes[i], arrRegRes[i+1]);
+                reg_n2 = _mm_unpacklo_ps(arrRegRes[i+2], arrRegRes[i+3]);
+            }
+            else{
+                reg_n1 = _mm_unpackhi_ps(arrRegRes[i], arrRegRes[i+1]);
+                reg_n2 = _mm_unpackhi_ps(arrRegRes[i+2], arrRegRes[i+3]);
+            }
+            reg_n3 = _mm_shuffle_ps(reg_n1, reg_n2, _MM_SHUFFLE(1,0,1,0));
+            reg_n4 = _mm_shuffle_ps(reg_n1, reg_n2, _MM_SHUFFLE(3,2,3,2));
+            
+            if(!z){
+                res = _mm_add_ps(reg_n3, reg_n4);
+            }
+            else{
+                reg_n1 = _mm_add_ps(reg_n3, reg_n4);
+                res = _mm_add_ps(reg_n1, res);
+            }
+        }
+        _mm_store_ps(&ypad[i], res);
     }
 
     for (i=0; i<m; i++){
