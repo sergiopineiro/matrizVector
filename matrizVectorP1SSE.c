@@ -4,10 +4,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/time.h>
+#include <xmmintrin.h>
+#include <pmmintrin.h>
+
 
 int main( int argc, char *argv[] ) {
 
-    int m, n, test, i, j;
+    int m, n, test, i, j, mpad, npad;
     float alfa;
     struct timeval t0, t1, t;
 
@@ -31,24 +34,42 @@ int main( int argc, char *argv[] ) {
         exit(0);
     }
 
-    float *x = (float *)malloc(n*sizeof(float));
-    float *A = (float *)malloc(m*n*sizeof(float));
+    mpad = m%4==0? m : m + (4-m%4);
+    npad = n%4==0? n: n + (4-n%4);
+    float *x = (float *)_mm_malloc(npad*sizeof(float), 16);
+    float *A = (float *)_mm_malloc(mpad*npad*sizeof(float), 16);
+    float *ypad = (float *)_mm_malloc(mpad*sizeof(float), 16);
     float *y = (float *)malloc(m*sizeof(float));
 
     // Se inicializan la matriz y los vectores
 
-    for(i=0; i<m; i++){
-        for(j=0; j<n; j++){
-            A[i*n+j] = ((float)(1+i+j))/m/n;
+    for(i=0; i<mpad; i++){
+        for(j=0; j<npad; j++){
+            if(i<m & j<n){
+                A[i*n+j] = ((float)(1+i+j))/m/n;
+            }
+            else{
+                A[i*npad+j] = 0.0;
+            }
         }
     }
 
-    for(i=0; i<n; i++){
-        x[i] = ((float)(1+i))/n;
+    for(i=0; i<npad; i++){
+        if(i<n){
+            x[i] = ((float)(1+i))/n;
+        }
+        else{
+            x[i] = 0.0;
+        }
+        
     }
 
     for(i=0; i<m; i++){
         y[i] = ((float)(1-i))/m;
+    }
+
+    for (i=0; i<mpad; i++){
+        ypad[i] = 0.0;
     }
 
     if(test){
@@ -72,15 +93,51 @@ int main( int argc, char *argv[] ) {
         }
         printf("\n");
     }
+    
+    float arrIni[4] __attribute__((aligned(16))) = {0.0, 0.0, 0.0, 0.0};
+    __m128 arrRegRes[mpad];
+    //Inicializo array de registros
+    for(i=0; i<mpad; i++){
+        arrRegRes[i] = _mm_load_ps(arrIni);
+    }
+    __m128 reg_A, reg_Alfa, reg_x, reg_y;
+    float arrAlfa[4] __attribute__((aligned(16))) = {alfa, alfa, alfa, alfa};
+
+    reg_Alfa = _mm_load_ps(arrAlfa);
 
     // Parte fundamental del programa
     assert (gettimeofday (&t0, NULL) == 0);
     for (i=0; i<m; i++) {
-        for (j=0; j<n; j++) {
-            y[i] += alfa*A[i*n+j]*x[j];
+        for (j=0; j<n; j+=4) {
+            reg_A = _mm_load_ps(&A[i*n+j]);
+            reg_A = _mm_mul_ps(reg_Alfa, reg_A);
+            reg_x = _mm_load_ps(&x[j]);
+            reg_A = _mm_mul_ps(reg_A, reg_x);
+            if(j!=0){
+                reg_y = _mm_add_ps(reg_y, reg_A);
+            }
+            else {
+                reg_y = reg_A;
+            }
         }
+        arrRegRes[i]= reg_y;
     }
-	
+
+    for(i=0; i<mpad; i+=4){
+        __m128 res1;
+        __m128 res2;
+        res1 = _mm_hadd_ps(arrRegRes[i], arrRegRes[i+1]);
+        res2 = _mm_hadd_ps(arrRegRes[i+2], arrRegRes[i+3]);
+        res1 = _mm_hadd_ps(res1, res1);
+        res2 = _mm_hadd_ps(res2, res2);
+        res1 = _mm_shuffle_ps(res1, res2, _MM_SHUFFLE(1,0,1,0));
+        _mm_store_ps(&ypad[i], res1);
+    }
+
+    for (i=0; i<m; i++){
+        y[i] += ypad[i];
+    }
+
     assert (gettimeofday (&t1, NULL) == 0);
     timersub(&t1, &t0, &t);
 
@@ -116,10 +173,14 @@ int main( int argc, char *argv[] ) {
 
     printf ("Tiempo      = %ld:%ld(seg:mseg)\n", t.tv_sec, t.tv_usec/1000);
 
-    free(x);
+    _mm_free(A);
+    _mm_free(x);
+    _mm_free(ypad);
     free(y);
-    free(A);
 	
     return 0;
 }
+
+
+
 
