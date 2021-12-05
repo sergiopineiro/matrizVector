@@ -10,7 +10,7 @@
 
 int main( int argc, char *argv[] ) {
 
-    int m, n, test, i, j, mpad, npad;
+    int m, n, test, i, j, z, mpad, npad;
     float alfa;
     struct timeval t0, t1, t;
 
@@ -107,20 +107,22 @@ int main( int argc, char *argv[] ) {
 
     // Parte fundamental del programa
     assert (gettimeofday (&t0, NULL) == 0);
-    for (i=0; i<m; i++) {
+    for (i=0; i<m; i+=4) {
         for (j=0; j<n; j+=4) {
-            reg_A = _mm_load_ps(&A[i*n+j]);
-            reg_A = _mm_mul_ps(reg_Alfa, reg_A);
             reg_x = _mm_load_ps(&x[j]);
-            reg_A = _mm_mul_ps(reg_A, reg_x);
-            if(j!=0){
-                reg_y = _mm_add_ps(reg_y, reg_A);
-            }
-            else {
-                reg_y = reg_A;
-            }
+            for (z=0; z<4; z++){
+                reg_A = _mm_load_ps(&A[(i+z)*n+j]);
+                reg_A = _mm_mul_ps(reg_Alfa, reg_A);
+                reg_A = _mm_mul_ps(reg_A, reg_x);
+                if(j!=0){
+                    arrRegRes[i+z] = _mm_add_ps(arrRegRes[i+z], reg_A);
+                }
+                else {
+                    arrRegRes[i+z] = reg_A;
+                }
+
+            } 
         }
-        arrRegRes[i]= reg_y;
     }
 
     for(i=0; i<mpad; i+=4){
