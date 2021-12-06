@@ -11,7 +11,7 @@
 
 int main( int argc, char *argv[] ) {
 
-    int m, n, test, i, j, z, mpad, npad;
+    int m, n, test, i, j, z, k, mpad, npad;
     float alfa;
     struct timeval t0, t1, t;
 
@@ -62,7 +62,6 @@ int main( int argc, char *argv[] ) {
         else{
             x[i] = 0.0;
         }
-        
     }
 
     for(i=0; i<m; i++){
@@ -102,11 +101,19 @@ int main( int argc, char *argv[] ) {
     for(i=0; i<mpad; i++){
         arrRegRes[i] = _mm256_load_ps(arrIni);
     }
-    __m256 reg_A, reg_Alfa, reg_x, reg_y;
+    __m256 reg_A, reg_Alfa, reg_x, reg_n1, reg_n2, reg_n3, reg_n4, reg_y;
+    __m128 res1, res2;
     float arrAlfa[8] __attribute__((aligned(32))) = {alfa, alfa, alfa, alfa,
                                                     alfa, alfa, alfa, alfa};
 
     reg_Alfa = _mm256_load_ps(arrAlfa);
+
+    int arrInd[8] __attribute__((aligned(32))) = {4, 5, 6, 7,
+                                                0, 1, 2, 3};
+    __m256i indx = _mm256_load_si256((__m256i *) arrInd);
+
+    int w, f;
+    float arr[8];
 
     // Parte fundamental del programa
     assert (gettimeofday (&t0, NULL) == 0);
@@ -125,39 +132,40 @@ int main( int argc, char *argv[] ) {
                 }
             }
         }
-    }
 
-    int arrInd[8] __attribute__((aligned(32))) = {0, 1, 4, 5,
-                                                2, 3, 6, 7};
-    __m256i indx = _mm256_load_si256((__m256i *) arrInd);
+        for(z=0; z<2; z++){
+            for(k=0; k<2; k++){
+                if(!k){
+                    reg_n1 = _mm256_unpacklo_ps(arrRegRes[i+z*4], arrRegRes[i+1+z*4]);
+                    reg_n2 = _mm256_unpacklo_ps(arrRegRes[i+2+z*4+2*k], arrRegRes[i+3+z*4+2*k]);
+                }
+                else{
+                    reg_n1 = _mm256_unpackhi_ps(arrRegRes[i+z*4], arrRegRes[i+1+z*4]);
+                    reg_n2 = _mm256_unpackhi_ps(arrRegRes[i+2+z*4], arrRegRes[i+3+z*4]);
 
-    for(i=0; i<mpad; i+=8){
-        __m256 res1, res2;
-        __m128 res_128_1, res_128_2;
+                }
+                
+                reg_n3 = _mm256_shuffle_ps(reg_n1, reg_n2, _MM_SHUFFLE(1,0,1,0));
+                reg_n4 = _mm256_shuffle_ps(reg_n1, reg_n2, _MM_SHUFFLE(3,2,3,2));
 
-        for(j=0; j<2; j++){
-            res1 = _mm256_hadd_ps(arrRegRes[i+4*j], arrRegRes[i+1+4*j]);
-            res2 = _mm256_hadd_ps(arrRegRes[i+2+4*j], arrRegRes[i+3+4*j]);
-         
-            res1 = _mm256_permutevar8x32_ps(res1, indx);
-            res2 = _mm256_permutevar8x32_ps(res2, indx);
-            
-            res1 = _mm256_hadd_ps(res1, res1);
-            res1 = _mm256_hadd_ps(res1, res1);
-            res1 = _mm256_permutevar8x32_ps(res1, indx);
-            
-            res2 = _mm256_hadd_ps(res2, res2);
-            res2 = _mm256_hadd_ps(res2, res2);
-            res2 = _mm256_permutevar8x32_ps(res2, indx);
+                if(!k){
+                    reg_y = _mm256_add_ps(reg_n3, reg_n4);
+                }
+                else{
+                    reg_n3 = _mm256_add_ps(reg_n3, reg_n4);
+                    reg_y = _mm256_add_ps(reg_y, reg_n3);
+                }
+            }
 
-            res_128_1 = _mm256_castps256_ps128(res1);
-            res_128_2 = _mm256_castps256_ps128(res2);
-            res_128_1 = _mm_shuffle_ps(res_128_1, res_128_2, _MM_SHUFFLE(2,0,2,0));
+            res1 = _mm256_castps256_ps128(reg_y);
+            reg_y = _mm256_permutevar8x32_ps(reg_y, indx);
+            res2 = _mm256_castps256_ps128(reg_y);
+            res1 = _mm_add_ps(res1, res2);
 
-            _mm_store_ps(&ypad[i+4*j], res_128_1);
+            _mm_store_ps(&ypad[i+4*z], res1);
         }
     }
-
+    
     for (i=0; i<m; i++){
         y[i] += ypad[i];
     }
