@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include <xmmintrin.h>
 #include <pmmintrin.h>
+#include <immintrin.h>
 
 
 int main( int argc, char *argv[] ) {
@@ -34,11 +35,11 @@ int main( int argc, char *argv[] ) {
         exit(0);
     }
 
-    mpad = m%4==0? m : m + (4-m%4);
-    npad = n%4==0? n: n + (4-n%4);
-    float *x = (float *)_mm_malloc(npad*sizeof(float), 16);
-    float *A = (float *)_mm_malloc(mpad*npad*sizeof(float), 16);
-    float *ypad = (float *)_mm_malloc(mpad*sizeof(float), 16);
+    mpad = m%8==0? m : m + (8-m%8);
+    npad = n%8==0? n: n + (8-n%8);
+    float *x = (float *)_mm_malloc(npad*sizeof(float), 32);
+    float *A = (float *)_mm_malloc(mpad*npad*sizeof(float), 32);
+    float *ypad = (float *)_mm_malloc(mpad*sizeof(float), 32);
     float *y = (float *)malloc(m*sizeof(float));
 
     // Se inicializan la matriz y los vectores
@@ -94,55 +95,66 @@ int main( int argc, char *argv[] ) {
         printf("\n");
     }
     
-    float arrIni[4] __attribute__((aligned(16))) = {0.0, 0.0, 0.0, 0.0};
-    __m128 arrRegRes[mpad];
+    float arrIni[8] __attribute__((aligned(32))) = {0.0, 0.0, 0.0, 0.0,
+                                                    0.0, 0.0, 0.0, 0.0};
+    __m256 arrRegRes[mpad];
     //Inicializo array de registros
     for(i=0; i<mpad; i++){
-        arrRegRes[i] = _mm_load_ps(arrIni);
+        arrRegRes[i] = _mm256_load_ps(arrIni);
     }
-    __m128 reg_A, reg_Alfa, reg_x, reg_n1, reg_n2, reg_n3, reg_n4, res;
-    
-    float arrAlfa[4] __attribute__((aligned(16))) = {alfa, alfa, alfa, alfa};
-    reg_Alfa = _mm_load_ps(arrAlfa);
+    __m256 reg_A, reg_Alfa, reg_x, reg_y;
+    float arrAlfa[8] __attribute__((aligned(32))) = {alfa, alfa, alfa, alfa,
+                                                    alfa, alfa, alfa, alfa};
+
+    reg_Alfa = _mm256_load_ps(arrAlfa);
 
     // Parte fundamental del programa
     assert (gettimeofday (&t0, NULL) == 0);
-    for (i=0; i<m; i+=4) {
-        for (j=0; j<n; j+=4) {
-            reg_x = _mm_load_ps(&x[j]);
-            for (z=0; z<4; z++){
-                reg_A = _mm_load_ps(&A[(i+z)*n+j]);
-                reg_A = _mm_mul_ps(reg_Alfa, reg_A);
-                reg_A = _mm_mul_ps(reg_A, reg_x);
-                if(j!=0){
-                    arrRegRes[i+z] = _mm_add_ps(arrRegRes[i+z], reg_A);
-                }
-                else {
-                    arrRegRes[i+z] = reg_A;
-                }
-            } 
+    for (i=0; i<m; i++) {
+        for (j=0; j<n; j+=8) {
+            reg_A = _mm256_load_ps(&A[i*n+j]);
+            reg_A = _mm256_mul_ps(reg_Alfa, reg_A);
+            reg_x = _mm256_load_ps(&x[j]);
+            reg_A = _mm256_mul_ps(reg_A, reg_x);
+            if(j!=0){
+                reg_y = _mm256_add_ps(reg_y, reg_A);
+            }
+            else {
+                reg_y = reg_A;
+            }
         }
-        for(z=0; z<2; z++){ //Traspone los cuatro registros y los suma
-            if(!z){
-                reg_n1 = _mm_unpacklo_ps(arrRegRes[i], arrRegRes[i+1]);
-                reg_n2 = _mm_unpacklo_ps(arrRegRes[i+2], arrRegRes[i+3]);
-            }
-            else{
-                reg_n1 = _mm_unpackhi_ps(arrRegRes[i], arrRegRes[i+1]);
-                reg_n2 = _mm_unpackhi_ps(arrRegRes[i+2], arrRegRes[i+3]);
-            }
-            reg_n3 = _mm_shuffle_ps(reg_n1, reg_n2, _MM_SHUFFLE(1,0,1,0));
-            reg_n4 = _mm_shuffle_ps(reg_n1, reg_n2, _MM_SHUFFLE(3,2,3,2));
+        arrRegRes[i]= reg_y;
+    }
+
+    int arrInd[8] __attribute__((aligned(32))) = {0, 1, 4, 5,
+                                                2, 3, 6, 7};
+    __m256i indx = _mm256_load_si256((__m256i *) arrInd);
+
+    for(i=0; i<mpad; i+=8){
+        __m256 res1, res2;
+        __m128 res_128_1, res_128_2;
+
+        for(j=0; j<2; j++){
+            res1 = _mm256_hadd_ps(arrRegRes[i+4*j], arrRegRes[i+1+4*j]);
+            res2 = _mm256_hadd_ps(arrRegRes[i+2+4*j], arrRegRes[i+3+4*j]);
+         
+            res1 = _mm256_permutevar8x32_ps(res1, indx);
+            res2 = _mm256_permutevar8x32_ps(res2, indx);
             
-            if(!z){
-                res = _mm_add_ps(reg_n3, reg_n4);
-            }
-            else{
-                reg_n1 = _mm_add_ps(reg_n3, reg_n4);
-                res = _mm_add_ps(reg_n1, res);
-            }
+            res1 = _mm256_hadd_ps(res1, res1);
+            res1 = _mm256_hadd_ps(res1, res1);
+            res1 = _mm256_permutevar8x32_ps(res1, indx);
+            
+            res2 = _mm256_hadd_ps(res2, res2);
+            res2 = _mm256_hadd_ps(res2, res2);
+            res2 = _mm256_permutevar8x32_ps(res2, indx);
+
+            res_128_1 = _mm256_castps256_ps128(res1);
+            res_128_2 = _mm256_castps256_ps128(res2);
+            res_128_1 = _mm_shuffle_ps(res_128_1, res_128_2, _MM_SHUFFLE(2,0,2,0));
+
+            _mm_store_ps(&ypad[i+4*j], res_128_1);
         }
-        _mm_store_ps(&ypad[i], res);
     }
 
     for (i=0; i<m; i++){
@@ -191,7 +203,3 @@ int main( int argc, char *argv[] ) {
 	
     return 0;
 }
-
-
-
-
